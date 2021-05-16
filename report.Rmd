@@ -1,0 +1,371 @@
+---
+title: "report"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## load packages
+```{r message=FALSE}
+library(dplyr)
+library(e1071)
+library(patchwork)
+library(forcats)
+library(knitr)
+library(formattable)
+library(ggplot2)
+library(ggrepel)
+library(logging)
+
+options(scipen=10000)
+```
+## get data
+```{r message=FALSE}
+source("./get_data.R")
+df_orig <- get_data()
+```
+```{r prepare_data, message=FALSE}
+source("./prepare_data.R")
+df_orig <- prepare_data(df_orig)
+comment(df_orig) <-  "Guardo el dataframe tras imputar valores faltantes, precision 21.9%"
+saveRDS(df_orig, file = "./data/df_orig.rds")
+
+df <- df_orig
+nums <- df_orig %>% dplyr::select_if(is.numeric)
+cats <- df_orig %>% dplyr::select_if(is.character)
+```
+
+## Variable a optimizar
+Queremos optimizar el beneficio obtenido al hacer una película. Para ello compararemos películas de distintas décadas, y hay que tener cuidado porque no es lo mismo un presupuesto o una recaudación de 30 millones en 1990, que 30 millones actuales. Esta variable tiende a aumentar por la inflación o el aumento de la poblanción mundial. Así pues, para poder comparar películas lejanas en el tiempo debemos neutralizar el efecto de esta tendencia. Abordaremos un aproximación simple que consiste en poner en relación Gross y Budget para obtener el beneficio neto.
+Otras aproximaciones podrían consistir en crear una serie temporal, descomponerla y eliminar la tendencia.
+
+Observamos en los siguientes gráficos, que la tendencia constante al aumento se ha neutralizado, apareciendo otras tendencias que pueden responder a causas propias de la industria cinematográfica.
+
+```{r message=FALSE}
+f <- function(df, column) {
+  p <- ggplot(df) + 
+  geom_bar(aes(year,.data[[column]]), 
+           position = "dodge", stat = "summary", fun = "mean")
+  return(p)
+}
+
+plot_list <- lapply(list("gross", "netGross", "grossPerBudget"), function(x){ f(nums, x) })
+plot_list
+```
+
+## Preparación de datos
+En la preparación de datos hemos hecho varias cosas:
+
+En las variables genre, country y company hemos agrupado en "Other" todas las observaciones que aparecen poco, porque una productora que aparece 2 o 3 veces, sesga el análisis
+
+De forma similar, hay algunos valores para rating que aparecen muy poco, así que los deshecho y los marco como UNRATED, así como NOT RATED y Not specified.
+
+Dado que hay 2182 observaciones con presupuesto de película cero, hemos intentado imputar estos valores faltantes con varias técnicas de regresión. Previamente se han obtenido métricas de error, generando un 20% de nulos donde no los había, y comprobando la capacidad de acierto. Las métricas de error arrojadas por estas imputaciones rondan el 20-40% de error en RMSE.
+
+```{r}
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))] # tabulate es lo mismo que table. te da el numero de repeticiones
+}
+
+nvars <- ncol(nums)
+
+stats <- data.frame(media=colMeans(nums),
+                          mediana=apply(nums, 2,  median),
+                          moda=apply(nums, 2,  Mode),
+                          desviacion=apply(nums, 2,  sd),
+                          varianza=apply(nums, 2,  var),
+                          Q1=apply(nums, 2,  quantile, probs=0.25),
+                          Q2=apply(nums, 2,  quantile, probs=0.50),
+                          Q3=apply(nums, 2,  quantile, probs=0.75),
+                          max=apply(nums, 2,  max),
+                          min=apply(nums, 2,  min),
+                          skewness=apply(nums, 2,  skewness),
+                          curtosis=apply(nums, 2,  kurtosis),
+                          row.names = colnames(nums))
+formattable(stats, digits = 1)
+# summary(df)
+```
+## Boxplots
+Como podemos observar, el boxplot nos representa: la mediana (línea negra gruesa), el recorrido intercuartílico (Q1:Q3) (caja) y los "bigotes" (líneas superiores) que representan 1.5 veces el recorrido intercuartílico. Los puntos más allá de estas líneas son los valores atípicos (outliers). Sobre esta gráfica hemos añadido información adicional como la media (triángulo rojo).
+
+```{r, figures-side, fig.show="hold", out.width="50%"}
+# pdf("boxplots.pdf")
+par(mar = c(3, 2, .1, .1))
+for (i in colnames(nums)){
+  X = nums[, i]
+    boxplot(X, main=i)
+    abline (h = mean(X) + 3 * sd(X), col = "red")
+    points(mean(X), col = "red", pch = 2)
+    abline (h = mean(X) - 3 * sd(X), col = "red")
+    legend (x = "bottomright", col =c("black", "red"), lty = c(1, 1), legend = c("quartiles", "mean +- 3*sd"))
+}
+# dev.off()
+```
+Nos encontramos con varias distribuciones bastante sesgadas a la derecha, lo cual nos indica que quizá tengamos que hacer una transformación de las variables para ajustar correctamente un modelo predictivo.
+```{r}
+library(rcompanion)
+for (i in colnames(nums)){
+  X = nums[, i]
+  plotNormalHistogram(X, main = i)
+}
+```
+
+Hay algunos outliers muy grandes en grossPerBudget que debemos eliminar para visualizar correctamente.
+
+```{r}
+data_names = subset(df, netGross > 2.5e+8 | netGross < -1.2e+8 | grossPerBudget > 400)
+ggplot(df, aes(x=budget, y=netGross)) + 
+  geom_point()+
+  geom_label_repel(data = data_names, aes(label = name), max.overlaps = 10, direction = c("both"))+
+  # geom_text(data = data_names,
+  #   label=data_names$name, check_overlap = TRUE)+
+  geom_smooth()
+```
+El beneficio neto crece a medida que crecen el presupuesto, pero la relación no es muy fuerte, hay que explicarla con más variables que veremos más adelante.
+
+```{r}
+df[order(-df$grossPerBudget), ] %>% head()
+df.vis <- df[!df$grossPerBudget %in% boxplot.stats(df$grossPerBudget, coef = 10)$out, ]
+```
+
+```{r ej4_scatter}
+# fit <- lm(gross ~ budget, data = df)
+# print(summary(fit))
+data_names = subset(df, budget > 42000000 & gross > 50065340)
+
+ggplot(df, aes(x=budget, y=gross, color=genre)) + 
+  geom_point()+
+  geom_text_repel(data = data_names, aes(label = name), max.overlaps = 7)+
+  # geom_text(data = data_names,
+  #   label=data_names$name, check_overlap = TRUE)+
+  geom_smooth()
+
+# data_names = subset(df.vis, grossPerBudget > mean(df.vis$grossPerBudget))
+# ggplot(df.vis, aes(x=budget, y=grossPerBudget, color=genre)) + 
+#   geom_point()+
+#   geom_text_repel(data = data_names, aes(label = name), max.overlaps = 13)
+```
+De este gráfico podemos concluir que el beneficio aumenta a medida que aumenta el presupuesto, especialmente en películas de acción, mientras que en biografías no merece la pena invertir presupuesto de más de 100 millones.
+
+
+```{r message=FALSE}
+library(GGally)
+# Function to return points and geom_smooth
+# allow for the method to be changed
+my_fn <- function(data, mapping, method="lm", ...){
+      p <- ggplot(data = data, mapping = mapping) + 
+      geom_point() + 
+      geom_smooth(method=method, ...)
+      p
+    }
+
+# Default loess curve    
+ggpairs(nums[,c("budget", "runtime", "netGross", "gross")], lower = list(continuous = my_fn), progress = FALSE)
+```
+Volvemos a ver el sesgo a la derecha de las variables numéricas que podemos controlar, ya que otras como año, score o votes es algo que no decidimos a priori cuando vamos a producir una película.
+El beneficio sí está muy relacionado con el presupuesto, pero no tanto el beneficio neto.
+
+El siguiente gráfico de correlaciones muestra la correlación fuerte que hay entre presupuesto y votos.
+## Correlaciones
+```{r correlations}
+library(corrplot)
+corrplot(cor(nums))
+```
+
+## Modelo explicativo
+```{r}
+fit.data <- dplyr::select(df, c("budget", "country", "genre", "rating" , "runtime", "netGross"))
+saveRDS(fit.data, "./data/fit.data.rds")
+fit <- lm(netGross ~ ., data=fit.data)
+
+anova(fit)
+summary(fit)
+
+# fit.data <- dplyr::select(df, -c("name", "released", "company", "gross", "year")) %>%
+#   dplyr::filter(budget < 100000000)
+# summary(lm(netGross ~ -1 +., data=fit.data))
+```
+El análisis de varianza de Anova nos indica que las variables categóricas "country", "genre" y "rating" son significativas a la hora de explicar el beneficio neto. Veamos cómo afecta cada una mediante una regresión lineal.
+
+Primero comentar que el R-squared (el porcentaje de variabilidad que explican nuestros datos) de este modelo es bastante bajo. Lo he conseguido mejorar mediante transformaciones boxcox. Al hacer estas transformaciones se mejoran las predicciones, ya que el R-squared aumenta hasta 26% pero se pierde explicabilidad, que es lo que nos interesa en este caso.
+
+### Género
+Se ha usado el género de acción como referencia.A partir de este podemos decir que animación es el género que más beneficio da. La interpretación es la siguiente: Hacer una película de animación está significativamente asociado con un incremento promedio de 18 millones comparado con el género acción. El género de terror 16M, y la comedia 6 millones. Por tanto la recomendación es hacer una película de uno de estos géneros.
+### País
+El país no es significativo pero las películas norteamericanas son las únicas que tienen un efecto positivo en el beneficio final. Teniendo en promedio 8 millones de beneficio más que las canadienses, que se han usado como referencia. Tampoco tengo claro si tenemos la capacidad de elegir en qué país vamos a producir la película.
+### Duración
+La duración de la película también tiene una relación positiva y significativa, aumentando el beneficio 245k por cada unidad de aumento de la duración, que viene en minutos.
+### Rating
+En cuanto al rating, el preferible es "G", mientras que R y UNRATED tienen una correlación negativa con el beneficio neto. En promedio, una película de rating "R" tiene 10M menos de beneficio que una película con rating "G".
+### Presupuesto
+Por último, el presupuesto tiene una relación positiva y significativa, aumentando el beneficio neto promedio en 0.09 por cada dolar invertido.
+
+
+## Predicciones
+```{r}
+if(exists('new_data')){rm(new_data)}
+new_data=expand.grid(budget = seq(from = 1e+06, to=300e+06, length.out=3 ),
+                     country = "USA",
+                     genre = c("Action", "Comedy", "Animation", "Drama"),
+                     rating = c("G","R"),
+                     runtime = 106
+                     )
+new_data$netGross <-  predict(fit, newdata = new_data)
+new_data[order(-new_data$netGross),]
+```
+
+Podemos observar que al ajustar una regresión lineal a la variable netGross con budget como variable independiente, los residuos no están distribuidos de forma homogénea, así que hay que transformar la variable dependiente para mejorar el ajuste
+Veamos primero los residuos del modelo creado anteriormente, el normal.
+```{r}
+plot(fit,1)
+plot(fit,2)
+```
+En primer lugar vemos la distribución de la variable netGross antes de transformar y después. Vemos que se convierte en una distribución normal. Igual sucede con budget. El modelo de regresión lineal espera que la variable dependiente tenga una distribución normal. Y gracias a esto vemos cómo aumenta la explicabilidad.
+Conceptualmente lo que está haciendo es que haya más distancia entre los valores pequeños y menos entre los grandes.
+```{r}
+fit_for_BC <- lm(netGross+1-min(netGross) ~ ., data=fit.data)
+
+fit.dataT <- fit.data
+
+library(MASS)
+# boxcox(fit, plotit = T)
+
+# transform dependant variable
+Box = boxcox(fit_for_BC,              # Transform
+             lambda = seq(-6,6,0.1) , plotit = F     # Try values -6 to 6 by 0.1
+             )
+Cox = data.frame(Box$x, Box$y)            # Create a data frame with the results
+
+Cox2 = Cox[with(Cox, order(-Cox$Box.y)),] # Order the new data frame by decreasing y
+
+sprintf("Lambda obtenido para la transformación de la variable dependiente %s",round( Cox2[1,"Box.x"],1))                                  # Display the lambda with the greatest
+                                          #    log likelihood
+
+
+lambda = Cox2[1, "Box.x"]                 # Extract that lambda
+
+fit.dataT$netGrossT = (fit.data$netGross ^ lambda - 1)/lambda   # Transform the original data
+fit.dataT$netGross <- NULL
+
+library(rcompanion)
+plotNormalHistogram(fit.data$netGross)
+plotNormalHistogram(fit.dataT$netGrossT)
+
+
+# transform independant variable
+Box = boxcox(fit.data$budget ~ 1,              # Transform  as a single vector
+             lambda = seq(-6,6,0.1), plotit = F      # Try values -6 to 6 by 0.1
+             )
+Cox = data.frame(Box$x, Box$y)            # Create a data frame with the results
+
+Cox2 = Cox[with(Cox, order(-Cox$Box.y)),] # Order the new data frame by decreasing y
+
+sprintf("Lambda obtenido para transformación de la variable dependiente budget %s",round( Cox2[1,"Box.x"],1))                                  # Display the lambda with the greatest
+                                          #    log likelihood
+
+
+lambda = Cox2[1, "Box.x"]                 # Extract that lambda
+
+fit.dataT$budgetT = (fit.data$budget ^ lambda - 1)/lambda   # Transform the original data
+fit.dataT$budget <- NULL
+
+plotNormalHistogram(fit.data$budget)
+plotNormalHistogram(fit.dataT$budgetT)
+```
+Volvemos a ajustar una regresión lineal con estas variables transformadas y vemos como se cumple la homocedasticidad de los residuos, que es una asunción necesaria para la obtención de un modelo óptimo.
+Homocedasticidad de los residuos, significa que los errores se repartan igualmente por encima y por debajo
+```{r}
+
+# fit.log <- lm(log(netGross+1-min(netGross)) ~ ., data=fit.data)
+# plot(fit.log,1)
+# plot(fit.log,2)
+# summary(fit.log)
+
+fit.T <- lm(netGrossT ~ ., data=fit.dataT)
+plot(fit.T,1)
+plot(fit.T,2)
+summary(fit.T)
+```
+
+```{r}
+# install.packages("drat", repos="https://cran.rstudio.com")
+# drat:::addRepo("dmlc")
+# install.packages("xgboost", repos="http://dmlc.ml/drat/", type = "source")
+# # devtools::install_github('dmlc/xgboost',subdir='R-package')
+# library(xgboost)
+# df4_target_removed <- fit.data %>% dplyr::select( -netGross)
+# df4_labels <- fit.data$netGross
+# df4matrix <- data.matrix(df4_target_removed)
+# 
+# # df4matrix <- xgb.DMatrix(as.matrix(df4_target_removed))
+# 
+# 
+# 
+# ## Create the xgboost model
+# model = xgboost(data = df4matrix,
+#                 nround = 10,
+#                 objective="reg:linear", #reg:squarederror
+#                 label = df4_labels
+# )
+# ## Calculate shap values
+# source("//aaesrv01/PERFILES/cvaliente/Mis documentos/datos/proyectos/190903_estudio_supervisiones_manuales/script/shap.R")
+# 
+# shap_result_bike = shap.score.rank(xgb_model = model,
+#                                    X_train =df4matrix,
+#                                    shap_approx = F)
+# 
+# ## Plot var importance based on SHAP
+# # var_importance(shap_result_bike, top_n=10)
+# 
+# ## Prepare data for top N variables
+# memory.limit(size=56000)
+# shap_long_bike = shap.prep(shap = shap_result_bike,
+#                            X_train = df4matrix,
+#                            top_n = 15
+# )
+# 
+# ## Plot shap overall metrics
+# windows()
+# plot.shap.summary(data_long = shap_long_bike)
+# 
+# 
+# ##
+# windows()
+# xgb.plot.shap(data = df4matrix, # input data
+#               model = model, # xgboost model
+#               features = names(shap_result_bike$mean_shap_score[1:10]), # only top 10 var
+#               n_col = 3, # layout option
+#               plot_loess = T # add red line to plot
+# )
+```
+
+
+```{r ej2_freqs}
+# table(cats$rating, cats$genre)
+agg <- dplyr::count(df, year, genre)
+agg_ord <- mutate(agg, genre = reorder(genre, -n, mean))
+ggplot(agg_ord) + geom_col(aes(x = genre, y = n))
+# ggplot(mutate(df_orig, GrossPerBudget = fct_infreq(genre))) + geom_bar(aes(x = genre))
+```
+En el siguiente gráfico podemos observar un poco más acerca de los géneros:
+Hemos agrupado por género y década
+Las películas de animación son siempre una apuesta segura. En un segundo nivel se puede recomendar aventura y acción.
+Drama y crimen son las más probables de obtener pérdidas.
+```{r gross by gender}
+df$decade <- df$year - df$year %% 10
+ggplot(df) + 
+  geom_bar(aes(decade, netGross, fill = as.factor(genre)), 
+           position = "dodge", stat = "summary", fun = "mean")
+ggplot(df) + 
+  geom_bar(aes(decade, budget, fill = as.factor(genre)), 
+           position = "dodge", stat = "summary", fun = "mean")
+
+```
+# ```{r ej1_mapply_1}
+# df <- df_orig
+# numerics <- df_orig %>% dplyr::select_if(is.numeric)
+# mapply(tapply, numerics, MoreArgs = list(FUN=mean, INDEX=df_orig$genre))
+# ```
