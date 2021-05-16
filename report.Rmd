@@ -34,7 +34,7 @@ saveRDS(df_orig, file = "./data/df_orig.rds")
 
 df <- df_orig
 nums <- df_orig %>% dplyr::select_if(is.numeric)
-cats <- df_orig %>% dplyr::select_if(is.character)
+cats <- df_orig %>% dplyr::select_if(is.factor)
 ```
 
 ## Variable a optimizar
@@ -52,7 +52,7 @@ f <- function(df, column) {
 }
 
 plot_list <- lapply(list("gross", "netGross", "grossPerBudget"), function(x){ f(nums, x) })
-plot_list
+for (i in seq_along(plot_list)) print(plot_list[[i]])
 ```
 
 ## Preparación de datos
@@ -62,8 +62,10 @@ En las variables genre, country y company hemos agrupado en "Other" todas las ob
 
 De forma similar, hay algunos valores para rating que aparecen muy poco, así que los deshecho y los marco como UNRATED, así como NOT RATED y Not specified.
 
-Dado que hay 2182 observaciones con presupuesto de película cero, hemos intentado imputar estos valores faltantes con varias técnicas de regresión. Previamente se han obtenido métricas de error, generando un 20% de nulos donde no los había, y comprobando la capacidad de acierto. Las métricas de error arrojadas por estas imputaciones rondan el 20-40% de error en RMSE.
+Dado que hay 2182 observaciones con presupuesto de película cero, hemos intentado imputar estos valores faltantes con varias técnicas de regresión. Previamente se han obtenido métricas de error, generando un 20% de nulos donde no los había, y comprobando el error de estas predicciones. Las métricas de error arrojadas por estas imputaciones rondan el 20-40% de error en RMSE.
 
+### Estadísticas
+Veamos estdísticas de cada variable numérica, y a continuación algunas de las variables categóricas.
 ```{r}
 Mode <- function(x) {
   ux <- unique(x)
@@ -86,10 +88,51 @@ stats <- data.frame(media=colMeans(nums),
                           curtosis=apply(nums, 2,  kurtosis),
                           row.names = colnames(nums))
 formattable(stats, digits = 1)
-# summary(df)
 ```
+```{r freqs}
+
+
+agg <- dplyr::count(df, genre)
+agg_ord <- mutate(agg, genre = reorder(genre, -n, mean))
+ggplot(agg_ord) + geom_col(aes(x = genre, y = n))
+
+agg <- dplyr::count(df, country)
+agg_ord <- mutate(agg, country = reorder(country, -n, mean))
+ggplot(agg_ord) + geom_col(aes(x = country, y = n))
+
+agg <- dplyr::count(df, rating)
+agg_ord <- mutate(agg, rating = reorder(rating, -n, mean))
+ggplot(agg_ord) + geom_col(aes(x = rating, y = n))
+
+agg <- dplyr::count(df, company)
+agg_ord <- mutate(agg, company = reorder(company, -n, mean))
+ggplot(agg_ord) + geom_col(aes(x = company, y = n)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+Se observa que company tiene demasiada granularidad para usarlo en el análisis. Además, si nosotros somos la productora "Martínez" no podríamos elegir ser Universal.
+
+Veamos ahora el beneficio neto por país, por rating y por género. Ya podemos ir adelantando que las películas rentables son las americanas y luego lo confirmaremos con un análisis más detallado. Cabe señalar que en el género de terror sí hay películas rentables en otros países.
+
+
+
+```{r}
+ggplot(df) + 
+  geom_bar(aes(country, netGross, fill = as.factor(genre)), 
+           position = "dodge", stat = "summary", fun = "mean")
+
+ggplot(df) + 
+  geom_bar(aes(rating, netGross), 
+           position = "dodge", stat = "summary", fun = "mean")
+
+ggplot(df) + 
+  geom_bar(aes(x=reorder(genre, -netGross), netGross), 
+           position = "dodge", stat = "summary", fun = "mean")
+```
+
+
 ## Boxplots
-Como podemos observar, el boxplot nos representa: la mediana (línea negra gruesa), el recorrido intercuartílico (Q1:Q3) (caja) y los "bigotes" (líneas superiores) que representan 1.5 veces el recorrido intercuartílico. Los puntos más allá de estas líneas son los valores atípicos (outliers). Sobre esta gráfica hemos añadido información adicional como la media (triángulo rojo).
+El boxplot nos representa: la mediana (línea negra gruesa), el recorrido intercuartílico (Q1:Q3) (caja) y los "bigotes" (líneas superiores) que representan 1.5 veces el recorrido intercuartílico. Los puntos más allá de estas líneas son los valores atípicos (outliers). Sobre esta gráfica hemos añadido información adicional como la media (triángulo rojo).
 
 ```{r, figures-side, fig.show="hold", out.width="50%"}
 # pdf("boxplots.pdf")
@@ -104,22 +147,23 @@ for (i in colnames(nums)){
 }
 # dev.off()
 ```
-Nos encontramos con varias distribuciones bastante sesgadas a la derecha, lo cual nos indica que quizá tengamos que hacer una transformación de las variables para ajustar correctamente un modelo predictivo.
+Nos encontramos con varias distribuciones bastante sesgadas a la derecha, lo cual nos indica que quizá tengamos que hacer una transformación de las variables para ajustar correctamente un modelo predictivo. Además vemos que la variable grossPerBudget tiene unos outliers muy grandes. Si quisiéramos predecir esta variable, habría que tenerlo en cuenta. Y si hacemos visualizaciones con ella deberíamos eliminarlos.
+
+Con los siguientes gráficos de densidad confirmamos la distribución sesgada a la derecha de gross y budget. 
+
 ```{r}
 library(rcompanion)
-for (i in colnames(nums)){
+for (i in c("budget", 'gross', 'runtime', 'score', 'votes', 'netGross')){
   X = nums[, i]
   plotNormalHistogram(X, main = i)
 }
 ```
 
-Hay algunos outliers muy grandes en grossPerBudget que debemos eliminar para visualizar correctamente.
-
-```{r}
+```{r message=FALSE}
 data_names = subset(df, netGross > 2.5e+8 | netGross < -1.2e+8 | grossPerBudget > 400)
 ggplot(df, aes(x=budget, y=netGross)) + 
   geom_point()+
-  geom_label_repel(data = data_names, aes(label = name), max.overlaps = 10, direction = c("both"))+
+  geom_label_repel(data = data_names, aes(label = name), max.overlaps = 10, direction = c("both"), verbose = F)+
   # geom_text(data = data_names,
   #   label=data_names$name, check_overlap = TRUE)+
   geom_smooth()
@@ -131,9 +175,9 @@ df[order(-df$grossPerBudget), ] %>% head()
 df.vis <- df[!df$grossPerBudget %in% boxplot.stats(df$grossPerBudget, coef = 10)$out, ]
 ```
 
-```{r ej4_scatter}
+```{r message=FALSE}
 # fit <- lm(gross ~ budget, data = df)
-# print(summary(fit))
+# print((fit))
 data_names = subset(df, budget > 42000000 & gross > 50065340)
 
 ggplot(df, aes(x=budget, y=gross, color=genre)) + 
@@ -182,11 +226,11 @@ saveRDS(fit.data, "./data/fit.data.rds")
 fit <- lm(netGross ~ ., data=fit.data)
 
 anova(fit)
-summary(fit)
+(fit)
 
 # fit.data <- dplyr::select(df, -c("name", "released", "company", "gross", "year")) %>%
 #   dplyr::filter(budget < 100000000)
-# summary(lm(netGross ~ -1 +., data=fit.data))
+# (lm(netGross ~ -1 +., data=fit.data))
 ```
 El análisis de varianza de Anova nos indica que las variables categóricas "country", "genre" y "rating" son significativas a la hora de explicar el beneficio neto. Veamos cómo afecta cada una mediante una regresión lineal.
 
@@ -282,7 +326,7 @@ Homocedasticidad de los residuos, significa que los errores se repartan igualmen
 # fit.log <- lm(log(netGross+1-min(netGross)) ~ ., data=fit.data)
 # plot(fit.log,1)
 # plot(fit.log,2)
-# summary(fit.log)
+# (fit.log)
 
 fit.T <- lm(netGrossT ~ ., data=fit.dataT)
 plot(fit.T,1)
@@ -343,13 +387,7 @@ summary(fit.T)
 ```
 
 
-```{r ej2_freqs}
-# table(cats$rating, cats$genre)
-agg <- dplyr::count(df, year, genre)
-agg_ord <- mutate(agg, genre = reorder(genre, -n, mean))
-ggplot(agg_ord) + geom_col(aes(x = genre, y = n))
-# ggplot(mutate(df_orig, GrossPerBudget = fct_infreq(genre))) + geom_bar(aes(x = genre))
-```
+
 En el siguiente gráfico podemos observar un poco más acerca de los géneros:
 Hemos agrupado por género y década
 Las películas de animación son siempre una apuesta segura. En un segundo nivel se puede recomendar aventura y acción.
