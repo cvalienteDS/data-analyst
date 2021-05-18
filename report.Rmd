@@ -1,6 +1,8 @@
 ---
 title: "report"
-output: html_document
+output:
+  html_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -51,9 +53,12 @@ f <- function(df, column) {
   return(p)
 }
 
-plot_list <- lapply(list("gross", "netGross", "grossPerBudget"), function(x){ f(nums, x) })
+plot_list <- lapply(list("gross", "netGross"), function(x){ f(nums, x) })
 for (i in seq_along(plot_list)) print(plot_list[[i]])
 ```
+
+## Qué variables explicativas debemos observar
+Debemos prestar atención a las variables que podemos decidir antes de emprender la producción de una película. Otras como año, o score no podemos controlarlas.
 
 ## Preparación de datos
 En la preparación de datos hemos hecho varias cosas:
@@ -66,7 +71,7 @@ Dado que hay 2182 observaciones con presupuesto de película cero, hemos intenta
 
 ### Estadísticas
 Veamos estdísticas de cada variable numérica, y a continuación algunas de las variables categóricas.
-```{r}
+```{r echo=FALSE}
 Mode <- function(x) {
   ux <- unique(x)
   ux[which.max(tabulate(match(x, ux)))] # tabulate es lo mismo que table. te da el numero de repeticiones
@@ -77,20 +82,20 @@ nvars <- ncol(nums)
 stats <- data.frame(media=colMeans(nums),
                           mediana=apply(nums, 2,  median),
                           moda=apply(nums, 2,  Mode),
-                          desviacion=apply(nums, 2,  sd),
-                          varianza=apply(nums, 2,  var),
+                          # desviacion=apply(nums, 2,  sd),
+                          # varianza=apply(nums, 2,  var),
                           Q1=apply(nums, 2,  quantile, probs=0.25),
                           Q2=apply(nums, 2,  quantile, probs=0.50),
                           Q3=apply(nums, 2,  quantile, probs=0.75),
                           max=apply(nums, 2,  max),
                           min=apply(nums, 2,  min),
-                          skewness=apply(nums, 2,  skewness),
-                          curtosis=apply(nums, 2,  kurtosis),
+                          # skewness=apply(nums, 2,  skewness),
+                          # curtosis=apply(nums, 2,  kurtosis),
                           row.names = colnames(nums))
 formattable(round(stats,1), digits = 1)
 ```
 
-```{r freqs}
+```{r freqs, echo=FALSE}
 
 
 agg <- dplyr::count(df, genre)
@@ -117,7 +122,7 @@ Se observa que company tiene demasiada granularidad para usarlo en el análisis.
 Veamos ahora el beneficio neto por país, por rating y por género. Ya podemos ir adelantando que las películas rentables son las americanas y luego lo confirmaremos con un análisis más detallado. Cabe señalar que en el género de terror sí hay películas rentables en otros países.
 
 
-```{r}
+```{r echo=FALSE}
 ggplot(df) + 
   geom_bar(aes(country, netGross, fill = as.factor(genre)), 
            position = "dodge", stat = "summary", fun = "mean")
@@ -126,12 +131,26 @@ ggplot(df) +
   geom_bar(aes(x=reorder(rating, -netGross), netGross), 
            position = "dodge", stat = "summary", fun = "mean")+
   xlab("rating")
+```
 
+Ratings:
+Rated G: General audiences – All ages admitted.
+
+Rated PG: Parental guidance suggested – Some material may not be suitable for pre-teenagers.
+
+Rated PG-13: Parents Strongly Cautioned – Some material may be inappropriate for children under 13.
+
+Rated R: Restricted – Under 17 requires accompanying parent or adult guardian.
+
+Rated NC-17: No children under 17 admitted
+
+```{r echo=FALSE}
 ggplot(df) + 
   geom_bar(aes(x=reorder(genre, -netGross), netGross), 
            position = "dodge", stat = "summary", fun = "mean")+
   xlab("genre")
 ```
+
 
 
 ## Boxplots
@@ -154,7 +173,7 @@ Nos encontramos con varias distribuciones bastante sesgadas a la derecha, lo cua
 
 Con los siguientes gráficos de densidad confirmamos la distribución sesgada a la derecha de gross y budget. 
 
-```{r}
+```{r echo=FALSE}
 library(rcompanion)
 for (i in c("budget", 'gross', 'runtime', 'score', 'votes', 'netGross')){
   X = nums[, i]
@@ -162,7 +181,9 @@ for (i in c("budget", 'gross', 'runtime', 'score', 'votes', 'netGross')){
 }
 ```
 
-```{r message=FALSE}
+### Beneficio vs budget
+El beneficio neto crece a medida que crecen el presupuesto, pero la relación no es muy fuerte, hay que explicarla con más variables que veremos más adelante.
+```{r message=FALSE, echo=FALSE}
 data_names = subset(df, netGross > 2.5e+8 | netGross < -1.2e+8 | grossPerBudget > 400)
 ggplot(df, aes(x=budget, y=netGross)) + 
   geom_point()+
@@ -172,14 +193,14 @@ ggplot(df, aes(x=budget, y=netGross)) +
   geom_smooth()
 ```
 
-El beneficio neto crece a medida que crecen el presupuesto, pero la relación no es muy fuerte, hay que explicarla con más variables que veremos más adelante.
+
 
 ```{r include=FALSE}
 df[order(-df$grossPerBudget), ] %>% head()
 df.vis <- df[!df$grossPerBudget %in% boxplot.stats(df$grossPerBudget, coef = 10)$out, ]
 ```
 
-```{r message=FALSE}
+```{r message=FALSE, echo=FALSE}
 
 data_names = subset(df, budget > 42000000 & gross > 50065340)
 
@@ -189,9 +210,10 @@ ggplot(df, aes(x=budget, y=netGross, color=genre)) +
   geom_smooth()
 
 ```
+
 De este gráfico podemos concluir que el beneficio aumenta a medida que aumenta el presupuesto en algunos géneros como acción o drama, mientras que en biografías se entra en pérdidas en presupuestos de más de 100 millones.
 
-```{r message=FALSE, echo=FALSE}
+```{r message=FALSE, echo=FALSE, include=FALSE}
 library(GGally)
 # Function to return points and geom_smooth
 # allow for the method to be changed
@@ -209,16 +231,18 @@ ggpairs(nums[,c("budget", "runtime", "netGross", "gross")], lower = list(continu
 Volvemos a ver el sesgo a la derecha de las variables numéricas que podemos controlar, ya que otras como año, score o votes es algo que no decidimos a priori cuando vamos a producir una película.
 El beneficio sí está muy relacionado con el presupuesto, pero no tanto el beneficio neto.
 
-El siguiente gráfico de correlaciones muestra la correlación fuerte que hay entre presupuesto y votos.
+
 
 ## Correlaciones
+Antes de ajustar un modelo predictivo, confirmamos que no haya alta correlación entre variables explicativas.
+El siguiente gráfico de correlaciones muestra la correlación fuerte que hay entre presupuesto y votos, así que es mejor no incluir ambas. Por supuesto, incluimos la que podemos controlar.
 ```{r correlations, message=FALSE, echo=FALSE}
 library(corrplot)
 corrplot(cor(nums))
 ```
 
 ## Modelo explicativo
-```{r}
+```{r echo=FALSE}
 fit.data <- dplyr::select(df, c("budget", "country", "genre", "rating" , "runtime", "gross"))
 saveRDS(fit.data, "./data/fit.data.rds")
 fit <- lm(gross ~ ., data=fit.data)
@@ -232,8 +256,6 @@ fit.data <- dplyr::select(df, c("budget", "country", "genre", "rating" , "runtim
 
 
 El análisis de varianza de Anova nos indica que las variables categóricas "country", "genre" y "rating" son significativas a la hora de explicar el beneficio neto. Veamos cómo afecta cada una mediante una regresión lineal.
-
-Primero comentar que el R-squared (el porcentaje de variabilidad que explican nuestros datos) de este modelo es bastante bajo. Lo he conseguido mejorar mediante transformaciones boxcox. Al hacer estas transformaciones se mejoran las predicciones, ya que el R-squared aumenta hasta 26% pero se pierde explicabilidad, que es lo que nos interesa en este caso.
 
 ### Género
 Se ha usado el género de acción como referencia.A partir de este podemos decir que animación es el género que más beneficio da. La interpretación es la siguiente: Hacer una película de animación está significativamente asociado con un incremento promedio de 18 millones comparado con el género acción. El género de terror 16M, y la comedia 6 millones. Por tanto la recomendación es hacer una película de uno de estos géneros.
@@ -260,11 +282,57 @@ new_data=expand.grid(budget = seq(from = 1e+06, to=300e+06, length.out=3 ),
                      rating = c("G","R"),
                      runtime = 106
                      )
-new_data$netGross <-  predict(fit, newdata = new_data)
-new_data[order(-new_data$netGross),]
+new_data$gross <-  predict(fit, newdata = new_data)
+new_data[order(-new_data$gross),]
 ```
 
-Podemos observar que al ajustar una regresión lineal a la variable netGross con budget como variable independiente, los residuos no están distribuidos de forma homogénea, así que hay que transformar la variable dependiente para mejorar el ajuste
+### Algunas conclusiones
+<!-- En el siguiente gráfico podemos observar un poco más acerca de los géneros: -->
+<!-- Hemos agrupado por género y década. -->
+<!-- Las películas de animación y de terror son siempre una apuesta segura. En un segundo nivel se puede recomendar el género de aventura y la comedia. Pero si tuviéramos que elegir uno, sería animación. -->
+<!-- Las películas más taquilleras de la historia son de acción, pero hay mejores alternativas. -->
+<!-- Drama y crimen son las más probables de obtener pérdidas. -->
+
+
+```{r, echo=FALSE, include=FALSE}
+df$decade <- df$year - df$year %% 10
+ggplot(df) + 
+  geom_bar(aes(decade, netGross, fill = as.factor(genre)), 
+           position = "dodge", stat = "summary", fun = "mean")
+```
+
+Como dato curioso observamos la evolución de los presupuestos por género. A lo largo de las décadas han aumentado los presupuestos para las películas de acción aventura y animación, manteniéndose invariables en otros géneros. 
+Parece como si la industria cinematográfica ya se hubiese dado cuenta antes de nuestro análisis, donde merece la pena invertir. Por su parte el género de terror es un caso particular ya que no muestra una relación lineal, las películas con bajo presupuesto de terror han funcionado históricamente bien, mientras que las más caras tienden a dar pérdidas.
+
+```{r by gender, echo=FALSE, message=FALSE}
+ggplot(df) + 
+  geom_bar(aes(decade, budget, fill = as.factor(genre)), 
+           position = "dodge", stat = "summary", fun = "mean")
+
+dataHorror <- df %>% dplyr::filter(genre == "Horror")
+# data_names = subset(dataHorror, budget > 42000000 & gross > 50065340)
+
+my_fn <- function(data, genre){
+  # data <- df %>% dplyr::filter(genre == genre) 
+  data <- df[df$genre == genre, ]
+  p <- ggplot(data, aes(x=budget, y=netGross)) + 
+      geom_point()+
+      geom_text_repel(data = data, aes(label = name), max.overlaps = 7, verbose = F)+
+      geom_smooth()+
+      ggtitle(genre) +
+      theme(plot.title = element_text(hjust = 0.5))
+  print(p)
+}
+
+
+for(g in c("Action" ,"Horror", "Comedy", "Drama")){
+  my_fn(df, g)
+}
+
+```
+
+### Anexo de mejora de modelo predictivo
+Podemos observar que al ajustar una regresión lineal a la variable gross con budget como variable independiente, los residuos no están distribuidos de forma homogénea, así que hay que transformar la variable dependiente para mejorar el ajuste
 Veamos primero los residuos del modelo creado anteriormente, el normal.
 ```{r}
 plot(fit,1)
@@ -273,7 +341,7 @@ plot(fit,2)
 
 En primer lugar vemos la distribución de la variable gross antes de la transformación y después. Vemos que se convierte en una distribución normal. Igual sucede con budget. El modelo de regresión lineal espera que la variable dependiente tenga una distribución normal. Y gracias a esto vemos cómo aumenta la explicabilidad.
 Conceptualmente lo que está haciendo es que haya más distancia entre los valores pequeños y menos entre los grandes.
-```{r, echo=FALSE}
+```{r, echo=FALSE, message=FALSE}
 fit_for_BC <- lm(netGross+1-min(netGross) ~ ., data=fit.data)
 
 
@@ -343,49 +411,3 @@ plot(fit.T,1)
 plot(fit.T,2)
 summary(fit.T)
 ```
-
-En el siguiente gráfico podemos observar un poco más acerca de los géneros:
-Hemos agrupado por género y década
-Las películas de animación y de terror son siempre una apuesta segura. En un segundo nivel se puede recomendar el género de aventura y la comedia. Pero si tuviéramos que elegir uno, sería animación.
-Las películas más taquilleras de la historia son de acción, pero en promedio es un género que no recomendaríamos.
-Drama y crimen son las más probables de obtener pérdidas.
-
-Como dato curioso observamos que a lo largo de las décadas han aumentado los presupuestos para las películas de acción aventura y animación, manteniéndose invariables en otros géneros.
-Parece como si la industria cinematográfica ya se hubiese dado cuenta antes de nuestro análisis, donde merece la pena invertir. El género de terror es un caso particular ya que no muestra una relación lineal, las películas con bajo presupuesto de terror han funcionado históricamente bien, mientras que las más caras tienden a dar pérdidas.
-
-```{r by gender}
-df$decade <- df$year - df$year %% 10
-ggplot(df) + 
-  geom_bar(aes(decade, netGross, fill = as.factor(genre)), 
-           position = "dodge", stat = "summary", fun = "mean")
-ggplot(df) + 
-  geom_bar(aes(decade, budget, fill = as.factor(genre)), 
-           position = "dodge", stat = "summary", fun = "mean")
-
-dataHorror <- df %>% dplyr::filter(genre == "Horror")
-# data_names = subset(dataHorror, budget > 42000000 & gross > 50065340)
-ggplot(dataHorror, aes(x=budget, y=netGross)) + 
-  geom_point()+
-  geom_text_repel(data = dataHorror, aes(label = name), max.overlaps = 7, verbose = F)+
-  geom_smooth()
-
-my_fn <- function(data, genre){
-  # data <- df %>% dplyr::filter(genre == genre) 
-  data <- df[df$genre == genre, ]
-  p <- ggplot(data, aes(x=budget, y=netGross)) + 
-      geom_point()+
-      geom_text_repel(data = data, aes(label = name), max.overlaps = 7, verbose = F)+
-      geom_smooth()+
-      ggtitle(genre) +
-      theme(plot.title = element_text(hjust = 0.5))
-  print(p)
-}
-
-
-for(g in unique(df$genre)){
-  my_fn(df, g)
-}
-
-```
-
-

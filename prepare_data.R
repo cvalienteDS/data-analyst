@@ -23,10 +23,12 @@ prepare_data <- function(df){
   
   df_vis <- df[, c("budget", "genre", "gross", "rating", "year", "runtime", "score", "votes", "country")]
   ## observacion de nulos
-  ## check if missing at random
+  # # check if missing at random
+  # loginfo('check if missing at random')
   # df_vis$miss <- ifelse(is.na(df_vis$budget), 1, 0) # ponemos 1 cuando hay missing data e intentamos ver si hay correlacion
   # fit_data <- dplyr::select(df_vis,-c("budget"))
-  # summary(glm(miss ~ votes+gross, data=fit_data, family=binomial))
+  # browser()
+  # summary(glm(miss ~ year + genre + gross, data=fit_data, family=binomial))
   # fit_data %>% select_if(is.numeric) %>% cor()
   
   # library(Amelia)
